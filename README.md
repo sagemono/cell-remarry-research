@@ -749,3 +749,9 @@ int sub_53C(int index, const void *payload)
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Issues
+
+The Syscon side protocol is now fully understood. The remaining blocker is reverse engineering `ss_sc_init_pu.fself`. The CELL side factory initialization module that generates the 0x290-byte remarry payload. While the eid_root_key needed for this process is dumpable with existing CFW tools, the exact payload format, which EID1 fields are used, and the CMAC signing process remain undocumented. Once someone reverses the CELL side module, it should be possible to craft remarriage payloads using dumped eid_root_key and EID1 data.
