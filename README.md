@@ -668,3 +668,84 @@ int sub_53C(int index, const void *payload)
 | 0x3D50 | `nvs_read_secure` | Hardware protected SNVS read |
 | 0x3D8E | `read_from_store` | Direct EEPROM read |
 | 0x2070C | `sub_2070C` | Verify and write to secure store |
+
+---
+
+## Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  CELL                                   SYSCON                              │
+│  (ss_sc_init_pu.fself)                  (Firmware)                          │
+│                                                                             │
+│  ┌────────────────────┐                 ┌────────────────────┐              │
+│  │ EID1 (flash?)      │                 │ SPCR (EEPROM)      │              │
+│  │ ├─ eid_root_key?   │                 │ ├─ 0x00: Status    │              │
+│  │ ├─ Per-console?    │                 │ ├─ 0x10: Enc Key   │              │
+│  │ └─ Random seed?    │                 │ ├─ 0x20: CMAC      │              │
+│  └────────────────────┘                 │ └─ 0x30+: Session  │              │
+│                                         └────────────────────┘              │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                           FACTORY WIPE SEQUENCE                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. JIG sends Command 255.255:                                              │
+│     ┌──────────────────────────────────────────────────────┐                │
+│     │[FF][FF][00][AD][1A][...random?...][password][random?]│                │
+│     │                      ▲                               │                │
+│     │            FactoryInit_Password                      │                │
+│     │     (2EA267093B4556ED9D3BE62E115D6D59)               │                │
+│     └──────────────────────────────────────────────────────┘                │
+│                              │                                              │
+│                              ▼                                              │
+│  2. Syscon verifies password (sub_17F0)                                     │
+│                              │                                              │
+│                              ▼                                              │
+│  3. Syscon wipes SPCR (0x2560 bytes encrypted 0xFF)                         │
+│                              │                                              │
+│                              ▼                                              │
+│  4. Status becomes "uninitialized" -> decrypts to 0x01                      │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                           REMARRY SEQUENCE                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. CELL sends Command 255.1 with 0x290 byte payload:                       │
+│     ┌──────────────────────────────────────────────────────┐                │
+│     │ [FF][01][00][AD][1A][padding][656 bytes data][CMAC]  │                │
+│     └──────────────────────────────────────────────────────┘                │
+│                              │                                              │
+│                              ▼                                              │
+│  2. Syscon checks status == 0x01 (sub_27C)                                  │
+│     └─ If not 0x01 -> ERROR 0x8000040B                                      │
+│                              │                                              │
+│                              ▼                                              │
+│  3. Verify payload CMAC (sub_43A)                                           │
+│     └─ If invalid -> ERROR 0x8000040C                                       │
+│                              │                                              │
+│                              ▼                                              │
+│  4. Derive 4 session keys (sub_53C x 4)                                     │
+│     ├─ Key 0: Base session key?                                             │
+│     ├─ Key 1: Encryption key?                                               │
+│     ├─ Key 2: Decryption key?                                               │
+│     └─ Key 3: CMAC key?                                                     │
+│                              │                                              │
+│                              ▼                                              │
+│  5. Initialize 8 auth contexts (sub_C7C × 8)                                │
+│                              │                                              │
+│                              ▼                                              │
+│  6. Store encrypted payload and keys (sub_3FE)                              │
+│                              │                                              │
+│                              ▼                                              │
+│  7. Write status = 0x02 "married" (sub_2EA)                                 │
+│                              │                                              │
+│                              ▼                                              │
+│  8. Complete 4 auth handshakes (sub_7E2 × 4)                                │
+│                              │                                              │
+│                              ▼                                              │
+│  9. Remarry complete                                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
